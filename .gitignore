@@ -1,0 +1,98 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Node and generated frontend
+node_modules/
+dist/
+coverage/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime databases, uploads, models and credentials
+runtime-data/
+backend/data/
+/backend/backend/
+/backend/tests/
+/data/
+*.db
+*.db-wal
+*.db-shm
+initial-accounts.txt
+
+# Test and browser output
+test-results/
+playwright-report/
+*.log
+*.xml
+docs/evidence/**/*.png
+docs/evidence/**/*.json
+docs/**/*.zip
+http-check.json
+stage*-browser-*.json
+stage*-browser-*.log
+
+# Local archives, backups and generated handoff packages
+更新备份/
+知行_队友代码更新包_2026-11-15/
+知行_队友代码更新包_*.zip
+知行_队友交付文件清单_*.csv
+知行_与队友仓库差异及功能变化_*.md
+知行_*.zip
+*.rar
+.handoff_remote_manifest.txt
+scripts/build_teammate_handoff.py
+
+# Local presentation tooling and generated reports
+ppt-master-main/
+.presentation-build/
+汇报讲解素材/
+*.pptx
+
+# Local verification snapshots
+本机更新记录.json
+本机数据核对结果.json
+阶段*.json
+/版本选择清单.json
+/AI代码差异清单.txt
+/本机*.md
+/阶段*.md
+/*验收*.md
+/来源语义*.md
+/联网搜索_*.md
+/网页来源*.md
+/重启后*.md
+/等价重测*.md
+/官方资料*.md
+/docs/evidence/
+/frontend/batch*.mjs
+/frontend/browser-*.mjs
+/scripts/apply_stage3_data.py
+/scripts/apply_unified_update.py
+/scripts/evaluate-cloud.ps1
+/scripts/prepare_stage3_browser.py
+/scripts/publish_stage3_seeds.py
+/scripts/seed_stage3.py
+/scripts/verify_official_cloud_e2e.py
+/scripts/verify*.mjs
+/scripts/verify_batch*.py
+/scripts/prepare_batch*.py
+/scripts/check_stage3_browser.mjs
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+~$*
+

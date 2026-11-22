@@ -66,4 +66,3 @@ def cosine(left,right):
     import math
     denominator=math.sqrt(sum(x*x for x in left)*sum(x*x for x in right))
     return sum(x*y for x,y in zip(left,right))/denominator if denominator else 0
-

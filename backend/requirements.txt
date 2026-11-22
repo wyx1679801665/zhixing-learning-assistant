@@ -11,4 +11,3 @@ pytest>=8
 tzdata>=2025
 
 -r requirements-media.txt
-

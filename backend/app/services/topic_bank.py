@@ -12,6 +12,10 @@ PRACTICE={
 
 
 def question_bank(db,phase,graph_id=None):
+    if graph_id:
+        from app.services.engineering_goals import bank
+        scoped=bank(db,graph_id,phase)
+        if scoped is not None:return scoped,graph_id
     graph=one(db,'SELECT * FROM graph_versions WHERE id=:id',id=graph_id) if graph_id else one(db,'SELECT * FROM graph_versions WHERE active=1')
     fallback=QUESTIONS if phase=='diagnostic' else RETEST if phase=='retest' else [question for bank in PRACTICE.values() for question in bank]
     if not graph:return fallback,'curated-v1'
@@ -39,5 +43,9 @@ def validate_banks(nodes):
 
 def keywords(nodes):
     defaults={'functions':['函数','function','def '],'recursion':['递归','recursion'],'stack':['调用栈','栈','stack']}
-    return {node['id']:defaults.get(node['id'],[node.get('name',node['id']),node['id']])+node.get('aliases',[]) for node in nodes}
-
+    catalog_terms={
+        'catalog:p0-python-functions':['函数','参数','返回值','def '],
+        'catalog:p0-python-recursion':['递归','基本情况','规模缩小'],
+        'catalog:p0-python-stack':['调用栈','嵌套调用','返回顺序'],
+    }
+    return {node['id']:catalog_terms.get(node['id'],defaults.get(node['id'],[node.get('name',node['id']),node['id']]))+node.get('aliases',[]) for node in nodes}

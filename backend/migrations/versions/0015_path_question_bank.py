@@ -14,4 +14,3 @@ def upgrade():
 
 def downgrade():
     raise RuntimeError('Restore a verified backup to preserve question versions.')
-

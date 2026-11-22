@@ -18,4 +18,3 @@ export function TaskSupplement({task,onChanged}:{task:any,onChanged:()=>void}) {
   }
   return <div><button disabled={busy} onClick={open}>创建指定学生补发草稿</button>{members&&<fieldset><legend>选择补发接收人</legend><p>原任务及历史作答保留，新任务需核对后发布。</p>{members.map(m=><label className="choice" key={m.id}><input type="checkbox" checked={selected.includes(m.id)} onChange={e=>setSelected(e.target.checked?[...selected,m.id]:selected.filter(id=>id!==m.id))}/>{m.name} · {m.username}</label>)}<button disabled={busy||!selected.length} onClick={submit}>建立补发草稿</button><button disabled={busy} onClick={()=>setMembers(null)}>取消</button></fieldset>}{message&&<p role="status">{message}</p>}</div>;
 }
-

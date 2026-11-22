@@ -39,4 +39,3 @@ export function GraphManager(){
   </section>)}
  </section>
 }
-

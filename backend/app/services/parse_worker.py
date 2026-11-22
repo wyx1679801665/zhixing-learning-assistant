@@ -57,4 +57,3 @@ def drain_once():
         run(db,'UPDATE resource_versions SET extraction_json=:data,review_status=:review WHERE id=:v',data=dump(extraction),review='pending' if review else 'not_required',v=v['id'])
         if not error and not review:run(db,'INSERT INTO chunks VALUES(:r,:v,:b)',r=v['resource_id'],v=v['id'],b=tokenize(body))
         run(db,'UPDATE parse_jobs SET status=:s,error=:e,updated_at=:t WHERE id=:id',s='failed' if error else 'ready',e=error,t=now(),id=j['id'])
-

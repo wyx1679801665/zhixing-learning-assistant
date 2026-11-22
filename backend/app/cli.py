@@ -151,9 +151,15 @@ def reset_demo_sandbox(directory,confirmation):
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('action',choices=['init','demo','backup','restore','reindex','prepare-models','demo-sandbox','demo-reset','evaluate-cloud']);parser.add_argument('path',nargs='?');parser.add_argument('--destination');parser.add_argument('--confirm');parser.add_argument('--config-id');parser.add_argument('--operator');parser.add_argument('--previous-report')
+    parser=argparse.ArgumentParser();parser.add_argument('action',choices=['import-question-candidates','import-public-catalog','init','demo','backup','restore','reindex','prepare-models','demo-sandbox','demo-reset','evaluate-cloud']);parser.add_argument('path',nargs='?');parser.add_argument('--destination');parser.add_argument('--confirm');parser.add_argument('--config-id');parser.add_argument('--operator');parser.add_argument('--previous-report')
     args=parser.parse_args()
-    if args.action=='evaluate-cloud' and args.path and args.config_id and args.operator:
+    if args.action=='import-question-candidates':
+        from app.services.question_candidates import import_candidates
+        print(json.dumps(import_candidates(),ensure_ascii=False))
+    elif args.action=='import-public-catalog':
+        from app.services.public_catalog import import_catalog
+        print(json.dumps(import_catalog(),ensure_ascii=False))
+    elif args.action=='evaluate-cloud' and args.path and args.config_id and args.operator:
         from app.services.quality_evaluation import evaluate
         result=evaluate(args.config_id,args.path,args.operator,args.previous_report)
         print('自动判据通过',result['automated_passed'],'/',result['total'],'，语义正确性仍需人工复核')
@@ -167,4 +173,3 @@ def main():
     else: parser.error('backup需要目标目录；restore需要源目录和--destination')
 
 if __name__=='__main__': main()
-

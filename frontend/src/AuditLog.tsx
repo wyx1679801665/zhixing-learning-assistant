@@ -39,4 +39,3 @@ export function AuditLog(){
     <button disabled={loading||rows.length<50} onClick={()=>setPage(page+1)}>下一页</button>
   </section>;
 }
-

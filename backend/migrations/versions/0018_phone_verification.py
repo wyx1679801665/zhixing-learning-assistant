@@ -10,4 +10,3 @@ def upgrade():
 
 def downgrade():
     raise RuntimeError('Restore a verified backup.')
-

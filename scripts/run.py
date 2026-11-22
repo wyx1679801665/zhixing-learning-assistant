@@ -4,13 +4,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--check', action='store_true')
-parser.add_argument('--port', type=int, default=8000)
+parser.add_argument('--port', type=int, default=8001)
+parser.add_argument('--model-dir', type=Path, default=ROOT / 'backend/data/models')
 args = parser.parse_args()
 os.chdir(ROOT)
 sys.path.insert(0, str(ROOT / 'backend'))
 os.environ['PYTHONPATH'] = str(ROOT / 'backend')
 os.environ['ZHIXING_DATA'] = str(ROOT / 'runtime-data')
-os.environ['ZHIXING_MODEL_DIR'] = str(ROOT / 'backend/data/models')
+os.environ['ZHIXING_MODEL_DIR'] = str(args.model_dir.resolve())
 from app.runtime_version import runtime_info
 from app.core.db import DATA
 from app.cli import migrate

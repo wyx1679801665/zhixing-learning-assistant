@@ -16,7 +16,9 @@ except Exception as exc:
     report['message']=('搜索服务60秒内未完成响应，请稍后再试或检查网络代理。' if isinstance(exc,httpx.ReadTimeout) else '无法连接搜索服务，请检查网络或代理。' if isinstance(exc,(httpx.ConnectTimeout,httpx.ConnectError)) else '搜索未返回可用来源，请检查服务配置和报告。')
 report['elapsed_seconds']=round(time.monotonic()-started,2)
 if not report['passed'] and 'message' not in report:report['message']='服务未返回可用的公开来源，不能判定联网搜索成功。'
-path=ROOT/'runtime-data'/('search-probe-'+datetime.now().strftime('%Y%m%d-%H%M%S')+'.json')
+destination=Path(os.getenv('ZHIXING_DATA',str(ROOT/'backend'/'data')))
+destination.mkdir(parents=True,exist_ok=True)
+path=destination/('search-probe-'+datetime.now().strftime('%Y%m%d-%H%M%S')+'.json')
 path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
 print('PASSED',report['passed']);print(report.get('message','已返回来源列表，正文仍需核实。'));print('REPORT',path)
 sys.exit(0 if report['passed'] else 1)

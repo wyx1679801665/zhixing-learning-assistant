@@ -27,6 +27,11 @@ def expose(db, student, questions, session_id=None, source='session', timestamp=
 
 
 def recover_history(db, student):
+    # Course papers and path sessions share the same conservative exposure ledger.
+    for item in rows(db,'''SELECT i.snapshot,a.created_at FROM learning_assessment_items i
+        JOIN learning_assessments a ON a.id=i.assessment_id WHERE a.student_id=:u''',u=student):
+        q=json.loads(item['snapshot'])
+        expose(db,student,[{'prompt':q['prompt'],'question_id':q['question_id']}],source='course_paper',timestamp=item['created_at'])
     for record in rows(db, 'SELECT questions,created_at FROM diagnoses WHERE student_id=:u', u=student):
         expose(db, student, json.loads(record['questions']), source='diagnosis_snapshot', timestamp=record['created_at'])
     # Assigned questions may already have been displayed. Treat them conservatively as exposed.
@@ -91,6 +96,8 @@ def session_dto(db, session):
 def begin_session(db, path_id, item_id, user, repeat=False):
     from app.api.goals import assessment_item
     path, task = assessment_item(db, user, path_id, item_id)
+    from app.services.course_planning import binding,bank
+    cb=binding(db,path['goal_id'])
     recover_history(db, user['id'])
     sessions = rows(db, '''SELECT * FROM assessment_sessions WHERE student_id=:u AND path_id=:p
         AND item_id=:i ORDER BY created_at DESC,id DESC''', u=user['id'], p=path_id, i=item_id)
@@ -101,6 +108,11 @@ def begin_session(db, path_id, item_id, user, repeat=False):
     if sessions and not repeat:
         return sessions[0]
     previous = next((s for s in sessions if s['status']=='submitted'), None)
+    if not previous and task.get('reinforcement') and task.get('source_item_id'):
+        previous = one(db, """SELECT s.* FROM assessment_sessions s JOIN paths p ON p.id=s.path_id
+            WHERE s.student_id=:u AND p.goal_id=:g AND s.goal_version=(SELECT version FROM goals WHERE id=:g) AND s.item_id=:i
+            AND s.status='submitted' ORDER BY s.submitted_at DESC,s.id DESC LIMIT 1""",
+            u=user['id'], g=path['goal_id'], i=task['source_item_id'])
     seen = {r['identity'] for r in rows(db, 'SELECT identity FROM question_exposures WHERE student_id=:u', u=user['id'])}
     candidates = []
     for version in rows(db, "SELECT * FROM bank_versions WHERE status='published' ORDER BY created_at,id"):
@@ -112,6 +124,11 @@ def begin_session(db, path_id, item_id, user, repeat=False):
         frozen = one(db, 'SELECT questions FROM path_question_bank WHERE path_id=:p AND item_id=:i', p=path_id, i=item_id)
         if frozen:
             candidates = json.loads(frozen['questions'])
+    if cb:
+        candidates=bank(db,cb,'retest' if previous else 'practice',{task['skill_id']})
+    from app.services.engineering_goals import context as project_context,bank as project_bank
+    pc=project_context(db,path['goal_id'])
+    if pc:candidates=[q for q in project_bank(db,pc['graph_version'],'retest' if previous else 'practice') if q['skill']==task['skill_id']]
     previous_question = json.loads(previous['questions'])[0] if previous else None
     selected = None
     for question in candidates:

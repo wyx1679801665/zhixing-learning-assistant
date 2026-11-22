@@ -28,4 +28,3 @@ export function PublishTask({task,onChanged}:{task:any;onChanged:(message:string
   {message&&<p role="status">{message}</p>}
  </div>
 }
-

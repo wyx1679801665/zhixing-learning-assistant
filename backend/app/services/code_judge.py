@@ -91,4 +91,3 @@ def submit_code(task_id,body,user):
         with transaction() as db:
             run(db,"UPDATE code_runs SET status='failed',error='判题失败，可重试',updated_at=:t WHERE assignment_id=:a AND token=:token",t=now(),a=task['assignment_id'],token=token)
         raise
-

@@ -13,4 +13,3 @@ export function CodeCasesEditor({initialCases}:{initialCases?:{stdin:string;stdo
     <button type="button" disabled={cases.length>=10} onClick={()=>setCases([...cases,{stdin:'',stdout:''}])}>增加用例</button>
   </details>;
 }
-

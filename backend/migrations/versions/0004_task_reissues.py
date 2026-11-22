@@ -8,4 +8,3 @@ def upgrade():
     op.get_bind().exec_driver_sql('CREATE TABLE task_reissues(task_id TEXT PRIMARY KEY REFERENCES tasks(id), previous_task_id TEXT NOT NULL REFERENCES tasks(id), created_at TEXT NOT NULL)')
 def downgrade():
     raise RuntimeError('Use a verified backup to restore historical tasks.')
-

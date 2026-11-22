@@ -1,12 +1,13 @@
 import {useState} from 'react';
 import {api} from './api';
-export function RunHistory({goalId,onSelect}:{goalId:string;onSelect:(run:any)=>void}){
+export function RunHistory({goalId,onSelect}:{goalId:string;onSelect:(id:string)=>void}){
  const [runs,setRuns]=useState<any[]>([]);
  const [error,setError]=useState('');
+ const statuses:Record<string,string>={queued:'排队中',running:'执行中',succeeded:'成功',failed:'失败',interrupted:'已中断',cancelled:'已取消',no_work:'无需新增任务'};
  return <section><button onClick={async()=>{try{setRuns(await api('/goals/'+goalId+'/runs'));setError('')}catch(e){setError((e as Error).message)}}}>查看规划运行历史</button>
   {error&&<p role="alert">{error}</p>}
-  {runs.map(run=><p key={run.id}>{run.kind} · {run.status} · 重试{run.retry_count}次
-   <button onClick={async()=>{try{onSelect(await api('/runs/'+run.id))}catch(e){setError((e as Error).message)}}}>恢复查看此运行</button>
+  {runs.map(run=><p key={run.id}>{run.kind==='replan'?'重规划':'首次规划'} · {statuses[run.status]||run.status} · 重试{run.retry_count}次{run.result_code&&<> · {run.result_code}</>}{run.result_action&&<> · {run.result_action}</>}
+   <button onClick={()=>onSelect(run.id)}>恢复查看此运行</button>
   </p>)}
  </section>
 }
@@ -18,4 +19,3 @@ export function RunTrace({run}:{run:any}){
   })}
  </section>
 }
-

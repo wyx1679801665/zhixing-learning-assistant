@@ -114,4 +114,3 @@ if __name__ == '__main__':
     except Exception:
         result = {'error': '本地识别失败，请检查文件格式、模型和依赖'}
     output.write_text(json.dumps(result, ensure_ascii=False), encoding='utf-8')
-

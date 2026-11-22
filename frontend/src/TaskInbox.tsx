@@ -55,4 +55,3 @@ export function TaskInbox({tasks,onChanged}:{tasks:any[];onChanged:()=>void}){
   {!tasks.filter(t=>!status||t.assignment_status===status).length&&<p>暂无符合条件的任务</p>}
  </>;
 }
-

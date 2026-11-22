@@ -95,4 +95,3 @@ class ModelInput(BaseModel):
     max_tokens: int = Field(default=2048,ge=256,le=8192)
     temperature: float = Field(default=.2,ge=0,le=2)
     prompt_version: str = Field(default='zhixing-v1',min_length=1,max_length=80)
-

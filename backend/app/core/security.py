@@ -83,4 +83,3 @@ def goal_access(db, user, goal_id):
     if not g:
         fail(404,'目标不存在')
     return g
-

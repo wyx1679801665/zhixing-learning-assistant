@@ -14,4 +14,3 @@ def upgrade():
 
 def downgrade():
     op.drop_table('parse_jobs')
-

@@ -108,4 +108,3 @@ def remove(id:str,student:str,user=Depends(current_user)):
     with transaction() as db:
         class_access(db,user,id,True); remove_member(db,id,student,user['id'])
     return {'ok':True}
-

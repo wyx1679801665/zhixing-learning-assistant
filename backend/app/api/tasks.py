@@ -244,4 +244,3 @@ def review(id:str,body:Review,user=Depends(current_user)):
         run(db,"UPDATE attempts SET status='scored',score=:s,feedback=:f WHERE id=:id",s=body.score,f=dump(feedback),id=id)
         save_mastery(db,a['student_id'],a['class_id']);audit(db,user['id'],'grade_reviewed',id)
     return {'ok':True,'grade_version':version}
-

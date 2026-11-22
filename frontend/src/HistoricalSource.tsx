@@ -19,4 +19,3 @@ export function HistoricalSource({source}:{source:any}){
   {body!==null&&<><article className="reading">{body}</article><button onClick={()=>setBody(null)}>收起引用正文</button></>}
  </section>;
 }
-

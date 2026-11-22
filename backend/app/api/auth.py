@@ -155,4 +155,3 @@ def audits(page:int=1,action:str='',actor_id:str='',target_id:str='',start_at:st
             params[key]=bounds[key]
     with transaction() as db:
         return rows(db,'SELECT * FROM audit_logs WHERE '+' AND '.join(clauses)+' ORDER BY created_at DESC,id DESC LIMIT 50 OFFSET :offset',**params)
-

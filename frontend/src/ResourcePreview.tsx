@@ -36,4 +36,3 @@ export function ResourcePreview({resource}: {resource: any}) {
     }) : resource.body && <article className="reading">{resource.body}</article>}
   </>;
 }
-

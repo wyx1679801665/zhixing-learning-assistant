@@ -30,4 +30,3 @@ CREATE TABLE model_configs(id TEXT PRIMARY KEY, model TEXT NOT NULL, endpoint TE
 CREATE TABLE agent_runs(id TEXT PRIMARY KEY, actor_id TEXT REFERENCES users(id), goal_id TEXT, kind TEXT NOT NULL, status TEXT NOT NULL, result_id TEXT, error TEXT, checkpoint TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, finished_at TEXT, idem_key TEXT NOT NULL, UNIQUE(actor_id,kind,idem_key));
 CREATE TABLE agent_steps(id TEXT PRIMARY KEY, run_id TEXT REFERENCES agent_runs(id), agent TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL);
 '''
-

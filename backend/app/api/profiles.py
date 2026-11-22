@@ -166,4 +166,3 @@ def projection(id:str,student:str,user=Depends(current_user)):
         class_access(db,user,id)
         if not one(db,"SELECT 1 FROM memberships WHERE class_id=:c AND user_id=:u AND status='active'",c=id,u=student): fail(404,'该学生不属于本班')
         return calculate(db,student,id)
-

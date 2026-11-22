@@ -8,11 +8,40 @@ from app.schemas import ModelInput
 
 router=APIRouter()
 
+RUN_ACTIONS={
+    'BUDGET_CONFLICT':'在“目标与诊断”延长截止日期、调整学习预算或缩小目标范围，再重新生成预览。',
+    'NO_PENDING_LEARNING_TASKS':'当前目标及先修已掌握；可选择新目标，或在出现新证据后重新规划。',
+    'EVIDENCE_GAP':'前往课程知识库补充已发布正文及技能关联，再重新规划。',
+    'CLOUD_PERMISSION_REQUIRED':'检查资料的云端发送许可，或选择本地规划。',
+    'PLANNING_INPUT_CHANGED':'目标、预算或证据已变化；点击“重试”可用当前数据重新计算，或发起新规划。',
+    'PREREQUISITE_DIAGNOSIS_GAP':'先完成覆盖目标与先修的诊断，再重新规划。',
+}
+
+def run_outcome(db,record):
+    step=one(db,"SELECT output_summary FROM agent_steps WHERE run_id=:id AND status IN ('failed','no_work') ORDER BY created_at DESC,rowid DESC LIMIT 1",id=record['id']) if record['status'] in ('failed','no_work') else None
+    try:result=json.loads(step['output_summary']) if step else {}
+    except (ValueError,TypeError):result={}
+    code=result.get('code')
+    if record['status']=='failed' and (
+        code=='NO_PENDING_LEARNING_TASKS' or (
+            not code and record['error']=='当前目标及先修知识点均已掌握，无需新增学习任务'
+        )
+    ):
+        record['status']='no_work'
+    if record['status']=='no_work' and not code:code='NO_PENDING_LEARNING_TASKS'
+    record['result_code']=code
+    record['budget_conflict']=result.get('budget_conflict')
+    record['missing_skills']=result.get('missing_skills',[])
+    record['result_action']=RUN_ACTIONS.get(code)
+    return record
+
 @router.get('/goals/{id}/runs')
 def goal_runs(id:str,user=Depends(current_user)):
     with transaction() as db:
         goal_access(db,user,id)
-        return rows(db,'SELECT id,kind,status,result_id,error,retry_count,created_at,finished_at FROM agent_runs WHERE goal_id=:g AND actor_id=:u ORDER BY created_at DESC LIMIT 50',g=id,u=user['id'])
+        records=rows(db,'SELECT id,kind,status,result_id,error,retry_count,created_at,finished_at FROM agent_runs WHERE goal_id=:g AND actor_id=:u ORDER BY created_at DESC LIMIT 50',g=id,u=user['id'])
+        for record in records:run_outcome(db,record)
+        return records
 
 def call_model(config,prompt):
     import time
@@ -163,7 +192,7 @@ def detail(id:str,user=Depends(current_user)):
         checkpoint=json.loads(r['checkpoint'])
         r['checkpoint']={'last_agent':checkpoint.get('last_agent'),'resumable':bool(checkpoint.get('fingerprint'))}
         r['steps']=rows(db,'SELECT agent,status,detail,created_at,input_fingerprint,output_summary,attempt_no FROM agent_steps WHERE run_id=:id ORDER BY created_at,rowid',id=id)
-        return r
+        return run_outcome(db,r)
 
 @router.post('/runs/{id}/cancel')
 def cancel(id:str,user=Depends(current_user)):
@@ -178,7 +207,9 @@ def retry(id:str,background:BackgroundTasks,user=Depends(current_user)):
     from app.services.planning import execute
     with transaction() as db:
         r=one(db,'SELECT * FROM agent_runs WHERE id=:id AND actor_id=:u',id=id,u=user['id'])
-        if not r or r['status'] not in ('failed','interrupted'): fail(409,'该运行不可重试')
+        if not r or run_outcome(db,r)['status'] not in ('failed','interrupted'): fail(409,'该运行不可重试')
+        g=goal_access(db,user,r['goal_id'])
+        if g['status']=='archived':fail(409,'目标已归档，不能重试旧规划；请新建或选择活动目标')
         run(db,"UPDATE agent_runs SET status='queued',error=NULL,retry_count=retry_count+1 WHERE id=:id",id=id)
     background.add_task(execute,id)
     return {'run_id':id}

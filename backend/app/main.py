@@ -8,11 +8,12 @@ from fastapi.responses import JSONResponse,FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.core.db import transaction,run,uid
-from app.api import phone,auth,classes,resources,tasks,goals,profiles,models,management,evidence,question_bank
+from app.api import discovery,engineering_goals,learning_catalog,curriculum_catalog,phone,auth,classes,resources,tasks,goals,profiles,models,management,evidence,question_bank,project_work
 
 @asynccontextmanager
 async def lifespan(app):
     with transaction() as db:
+        run(db,"UPDATE discovery_drafts SET status='interrupted' WHERE status='running'")
         run(db,"UPDATE agent_runs SET status='interrupted',error='服务重启导致中断，可重试' WHERE status IN ('queued','running')")
     stop=asyncio.Event()
     async def consume(drain):
@@ -27,14 +28,16 @@ async def lifespan(app):
     from app.services.profile_worker import drain_once as profile_once
     from app.services.parse_worker import drain_once as parse_once
     from app.services.vector_index import drain_once as vector_once
-    workers=[asyncio.create_task(consume(profile_once)),asyncio.create_task(consume(parse_once)),asyncio.create_task(consume(vector_once))]
+    from app.services.engineering_goals import auto_replan_once
+    workers=[asyncio.create_task(consume(profile_once)),asyncio.create_task(consume(parse_once)),asyncio.create_task(consume(vector_once)),asyncio.create_task(consume(auto_replan_once))]
     try: yield
     finally:
         stop.set()
         await asyncio.gather(*workers)
 
 app=FastAPI(title='知行智能学习平台',version='0.1.0',lifespan=lifespan)
-app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver'])
+extra_hosts=[h.strip() for h in os.getenv('ZHIXING_ALLOWED_HOSTS','').split(',') if h.strip()]
+app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver',*extra_hosts])
 
 @app.middleware('http')
 async def safety(request:Request,call_next):
@@ -63,7 +66,7 @@ async def errors(request,exc):
     detail=exc.detail if isinstance(exc.detail,dict) else {'message':str(exc.detail),'code':'REQUEST_FAILED'}
     return JSONResponse({**detail,'request_id':getattr(request.state,'request_id','')},status_code=exc.status_code,headers=exc.headers)
 
-for router in (auth.router,classes.router,resources.router,tasks.router,goals.router,profiles.router,models.router,management.router,evidence.router,question_bank.router):
+for router in (discovery.router,auth.router,classes.router,resources.router,tasks.router,goals.router,profiles.router,models.router,management.router,evidence.router,question_bank.router):
     app.include_router(router,prefix='/api/v1')
 
 @app.get('/api/v1/health')
@@ -112,3 +115,8 @@ if dist.exists():
 
 app.include_router(phone.router,prefix="/api/v1")
 
+app.include_router(curriculum_catalog.router,prefix="/api/v1")
+
+app.include_router(learning_catalog.router,prefix="/api/v1")
+app.include_router(project_work.router,prefix="/api/v1")
+app.include_router(engineering_goals.router,prefix="/api/v1")

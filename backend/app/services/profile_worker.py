@@ -25,4 +25,3 @@ def drain_once(limit=20):
             with transaction() as db:
                 run(db,"UPDATE profile_refresh_events SET status='failed',error='后台画像刷新失败，可重试',processed_at=:t WHERE student_id=:u AND source_watermark=(SELECT max(source_watermark) FROM profile_refresh_events WHERE student_id=:u)",t=now(),u=event['student_id'])
     return handled
-

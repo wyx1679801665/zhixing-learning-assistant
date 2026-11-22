@@ -4,12 +4,13 @@ from pathlib import Path
 from datetime import datetime
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'backend'))
-os.environ['ZHIXING_DATA']=str(ROOT/'runtime-data')
+os.environ.setdefault('ZHIXING_DATA',str(ROOT/'backend'/'data'))
+DATA_ROOT=Path(os.environ['ZHIXING_DATA'])
 from app.api.models import call_model
 from app.services.cloud_contracts import validate_output
 
 def main():
-    with sqlite3.connect('file:'+str(ROOT/'runtime-data/zhixing.db').replace(chr(92),'/')+'?mode=ro',uri=True) as db:
+    with sqlite3.connect('file:'+str(DATA_ROOT/'zhixing.db').replace(chr(92),'/')+'?mode=ro',uri=True) as db:
         db.row_factory=sqlite3.Row
         row=db.execute("SELECT * FROM model_configs WHERE status='active' ORDER BY created_at DESC LIMIT 1").fetchone()
     if not row:raise SystemExit('No active model configuration')
@@ -17,7 +18,7 @@ def main():
     if not os.getenv(config['secret_env']):raise SystemExit('Model key is missing in this process')
     source={'version_id':'synthetic-functions-v1','supported_skills':['functions'],'excerpt':'函数通过参数接收输入，通过return返回结果。double(x)返回x*2，因此double(3)返回6。练习计算double(0)和double(-1)的返回值。'}
     report={'type':'isolated_real_provider_probe','student_data_modified':False,'model':config['model'],'results':[]}
-    destination=ROOT/'runtime-data'/('source-probe-'+datetime.now().strftime('%Y%m%d-%H%M%S')+'.json')
+    destination=DATA_ROOT/('source-probe-'+datetime.now().strftime('%Y%m%d-%H%M%S')+'.json')
     def probe(name,agent,payload,predicate):
         try:
             response=call_model(config,json.dumps({'agent':agent,'output_contract_version':'planning-v2','task':payload},ensure_ascii=False))

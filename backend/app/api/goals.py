@@ -1,7 +1,7 @@
 import json,re
 from datetime import date,datetime,timedelta
 from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
-from fastapi import APIRouter,Depends,BackgroundTasks,Header
+from fastapi import APIRouter,Depends,BackgroundTasks,Header,Query
 from fastapi import HTTPException
 from pydantic import ValidationError
 from app.core.db import *
@@ -15,7 +15,7 @@ from app.services.planning_rules import graph_snapshot
 router=APIRouter()
 
 def question_snapshot(bank,version):
-    return [{**q,'version':version,'rule_version':'assessment-v1','source':{'kind':'curated' if version in ('curated-v1','diagnostic-v1','equivalent-v1') else 'reviewed_graph','id':'zhixing-'+q['id'],'license':'项目自编题' if version in ('curated-v1','diagnostic-v1','equivalent-v1') else '经管理员审核的图谱题库，来源见图谱版本'}} for q in bank]
+    return [q if q.get('course_question_version_id') else {**q,'version':version,'rule_version':'assessment-v1','source':{'kind':'curated' if version in ('curated-v1','diagnostic-v1','equivalent-v1') else 'reviewed_graph','id':'zhixing-'+q['id'],'license':'项目自编题' if version in ('curated-v1','diagnostic-v1','equivalent-v1') else '经管理员审核的图谱题库，来源见图谱版本'}} for q in bank]
 
 @router.get('/curriculum/skills')
 def curriculum(user=Depends(current_user)):
@@ -25,28 +25,90 @@ def curriculum(user=Depends(current_user)):
         covered={q['skill'] for q in bank}
         return {'version':version,'skills':[{'id':node['id'],'name':node['name'],'minutes':node['minutes'],'prerequisites':node['prerequisites'],'diagnostic_available':node['id'] in covered} for node in graph]}
 
+@router.post('/goals/course-route-preview')
+def course_route_preview(body:dict,user=Depends(current_user)):
+    role(user,'student')
+    text=body.get('text')
+    if not isinstance(text,str) or not 1<=len(text.strip())<=200:fail(422,'请填写200字以内的学习目标')
+    if body.get('consent') is not True:fail(422,'请确认允许云端分析目标')
+    with transaction() as db:
+        entries=rows(db,"SELECT s.id,s.name,c.id course_id,c.name course_name FROM curriculum_catalog_skills s JOIN curriculum_catalog_courses c ON c.id=s.course_id WHERE c.status='published' AND c.assessment_mode!='project_rubric' AND s.status IN ('approved','published') ORDER BY c.id,s.id LIMIT 201")
+    def gap(message):return {'cloud_called':False,'route':[],'gaps':[message]}
+    if not entries:return gap('目录中还没有可用于推荐的已发布课程及审核知识点。可继续使用已有主题创建目标。')
+    if len(entries)>200:return gap('已发布目录超出单次分析范围，需要先限定专业或课程。')
+    from app.services.engineering_goals import model_call
+    result,model_id=model_call('CourseRouteAdvisor',{'description':text.strip(),'catalog':entries,
+        'selection_policy':[
+            '先拆出学生明确要求的产出与约束，再选能够完成产出的最简单可行做法。课程名只说明知识点归属，不规定必须采用该课程的全部方法。',
+            '逐项做必要性检查：若不学习某项，仍能按题意完成产出，则不将其列为直接目标。不得把自己选的设计风格、工具、可选优化或进阶做法变成必修。',
+            '区分实现、解释和比较等动作。要求使用某语言不等于要求采用特定架构；明确指定的架构才属于约束。只要求解释原理时不增设编码任务。',
+            '只列直接目标，由服务端按已审核关系补入必要先修。每个reason说明该项对应原目标的哪个要求。若目录没有精确覆盖，说明缺口，不用高级主题替代基础能力。'],
+        'instruction':'按学习顺序列出达成目标直接需要的最少知识点。返回route数组，每项含id和reason；id只能来自目录。无匹配时返回空数组。gaps为未覆盖能力的字符串数组。不要安排学时或判断学生已掌握。'})
+    known={r['id']:r for r in entries};route=[];seen=set()
+    def checked(result):
+        route=[];seen=set()
+        items=result.get('route');gaps=result.get('gaps')
+        if not isinstance(items,list) or len(items)>30 or not isinstance(gaps,list) or len(gaps)>12 or not all(isinstance(g,str) and 0<len(g.strip())<=300 for g in gaps):fail(503,'云端课程路线格式错误')
+        for item in items:
+            key=item.get('id') if isinstance(item,dict) else None
+            if not isinstance(key,str) or key not in known or key in seen or not isinstance(item.get('reason'),str) or not 1<=len(item['reason'].strip())<=500:fail(503,'课程路线包含无效目录编号或理由')
+            seen.add(key);route.append({**known[key],'reason':item['reason']})
+        return route,gaps
+    route,gaps=checked(result)
+    excluded=[]
+    initial=[r['id'] for r in route]
+    if len(route)>1:
+        reviewed,_=model_call('CourseRouteScopeReviewer',{
+            'goal':text.strip(),'candidate':route,'catalog':[{'id':r['id'],'name':r['name']} for r in entries],
+            'instruction':'独立检查候选路线。先写一个满足原目标的最小实例（编程目标用一行伪代码；解释目标用一句话），返回baseline。若用几个标量和运算即可实现函数，不能因为候选方案自行设计了一个类，就要求学生学习对象建模等额外概念。若学生明确要求建模，则应保留。对照最小实例重新从目录选择覆盖每个明确产出的基础能力，允许替换遗漏或选深的项；由系统补先修。返回route（id、reason）及gaps字符串数组。gaps仅列目录缺少的能力，无缺口请返回空数组，不要写剔除理由。不要依据课程标题推断实现方式。'})
+        # Some reviewers explain omitted catalogue items in gaps. Keep these
+        # rationales separate from missing capabilities and never add their IDs to scope.
+        excluded=[]
+        if isinstance(reviewed,dict) and isinstance(reviewed.get('gaps'),list) and len(reviewed['gaps'])<=12:
+            unresolved=[]
+            for entry in reviewed['gaps']:
+                if isinstance(entry,dict) and set(entry)=={'id','reason'} and isinstance(entry['id'],str) and entry['id'] in known and isinstance(entry['reason'],str) and 0<len(entry['reason'].strip())<=500:
+                    excluded.append(entry)
+                else:unresolved.append(entry)
+            reviewed={**reviewed,'gaps':unresolved}
+        route,review_gaps=checked(reviewed)
+        if any(e['id'] in {r['id'] for r in route} for e in excluded):fail(503,'复核结果同时选入和排除了同一知识点')
+
+        gaps=list(dict.fromkeys(gaps+review_gaps))
+    if not route:return {'route':[],'gaps':gaps or ['未匹配到支持目标的知识点'],'cloud_called':True}
+    from app.services.engineering_goals import scope
+    with transaction() as db:
+        selected=[r['id'] for r in route]
+        expanded,relation=scope(db,selected,pilot=True)
+        if any(n['id'] not in known for n in expanded):return {'route':route,'gaps':gaps+['必要先修尚未发布，暂不能确认此范围'],'cloud_called':True}
+        proposal=uid()
+        analysis=dict(summary=text,skill_ids=selected,skills=expanded,relation_version=relation,
+                      milestones=[],uncovered_capabilities=gaps,clarifications=[],route=route,initial_skill_ids=initial,review_notes=excluded)
+        insert(db,'project_goal_proposals',id=proposal,student_id=user['id'],description=text,mode='course_route',
+               analysis=dump(analysis),model_config_id=model_id,created_at=now())
+    return {'route':route,'scope':expanded,'proposal_id':proposal,'gaps':gaps,'cloud_called':True}
+
+
 @router.post('/goals/interpret')
 def interpret(body:dict,user=Depends(current_user)):
     role(user,'student')
     text=str(body.get('text','')).strip()
     if not text or len(text)>1000: fail(422,'请输入1至1000字目标描述')
-    skills=[]
-    if 'python' in text.lower(): skills=[s['id'] for s in SKILLS]
-    else:
-        for skill,words in [('functions',['函数']),('recursion',['递归']),('stack',['调用栈'])]:
-            if any(word in text for word in words):skills.append(skill)
+    from app.services.course_planning import closure
     with transaction() as db:
         graph,_=graph_snapshot(db)
-    skill_ids={node['id'] for node in graph}
-    skills=[skill for skill in skills if skill in skill_ids]
-    for skill,aliases in keywords(graph).items():
-        if skill not in skills and any(alias.lower() in text.lower() for alias in aliases):skills.append(skill)
+    terms=keywords(graph)
+    if 'functions' in terms:terms['functions']+=['返回值','return']
+    matches={node['id']:next((w for w in terms[node['id']] if w.strip() and w.lower() in text.lower()),None) for node in graph}
+    skills=[k for k,v in matches.items() if v]
+    required=closure(graph,skills)
+    scope=[{'id':n['id'],'name':n['name'],'role':'target' if n['id'] in skills else 'prerequisite','matched':matches[n['id']]} for n in graph if n['id'] in required]
     date_match=re.search(r'\d{4}-\d{2}-\d{2}',text)
     time_match=re.search(r'每周\s*(\d+)\s*(小时|分钟)',text)
     weekly=int(time_match[1])*(60 if time_match[2]=='小时' else 1) if time_match else None
     return {'title':text,'target_skill_ids':skills,'due_date':date_match[0] if date_match else None,'weekly_minutes':weekly,
             'preference':'video' if '视频' in text else 'text' if '文本' in text or '阅读' in text else 'unspecified',
-            'needs_clarification':[] if skills else ['请补充知识范围，当前题库支持函数、递归和调用栈'],
+            'scope':scope,'needs_clarification':[] if skills else ['请具体说明希望完成的任务或选择知识点；仅凭语言或专业名称不能确定诊断范围。'],
             'confirmed':False,'method':'local-rule-v1'}
 
 @router.get('/goals/{id}/diagnoses')
@@ -68,8 +130,23 @@ def retest(id:str,user=Depends(current_user)):
         practiced=one(db,'SELECT c.id FROM checkins c JOIN paths p ON p.id=c.path_id WHERE p.goal_id=:g AND c.created_at>:t AND c.proportion>0',g=id,t=history[0]['created_at'])
         if not practiced: fail(409,'请先完成该目标的一次路径补强学习记录')
         graph_id=history[0]['bank_version']
-        bank,bank_version=question_bank(db,'retest',graph_id if graph_id not in ('diagnostic-v1','curated-v1') else None)
-        questions=question_snapshot(bank,bank_version)
+        from app.services.course_planning import binding,bank as course_bank,closure
+        cb=binding(db,id)
+        graph,_=graph_snapshot(db,id);required=closure(graph,json.loads(g['skills']))
+        if cb:
+            from app.services.curriculum_structure import extend_graph
+            graph=extend_graph(db,cb['course_id'],json.loads(cb['mappings']),graph)
+            required=closure(graph,json.loads(g['skills']))
+        bank,bank_version=(course_bank(db,cb,'retest',required),'course:'+cb['course_id']) if cb else question_bank(db,'retest',graph_id if graph_id not in ('diagnostic-v1','curated-v1') else None)
+        questions=bank if cb else question_snapshot(bank,bank_version)
+        questions=[q for q in questions if q['skill'] in required]
+        from app.services.engineering_goals import context as project_context
+        if cb or project_context(db,id):
+            from app.services.assessment_sessions import recover_history,question_keys
+            recover_history(db,user['id'])
+            seen={r['identity'] for r in rows(db,'SELECT identity FROM question_exposures WHERE student_id=:u',u=user['id'])}
+            questions=[q for q in questions if not any(k in seen for k in question_keys(q))]
+        if required-{q['skill'] for q in questions}:fail(409,'重测未覆盖目标及全部先修，请补齐未曝光的新题','RETEST_BANK_EXHAUSTED')
         if not questions: fail(409,'该目标缺少等价题库','RETEST_BANK_EXHAUSTED')
         did=uid();insert(db,'diagnoses',id=did,goal_id=id,student_id=user['id'],questions=dump(questions),goal_version=g['version'],bank_version=bank_version,created_at=now())
         audit(db,user['id'],'diagnostic_retest_created',did)
@@ -100,14 +177,41 @@ def listing(user=Depends(current_user)):
     with transaction() as db:
         goals=rows(db,'SELECT * FROM goals WHERE student_id=:u ORDER BY created_at DESC',u=user['id'])
         for g in goals:
+            from app.services.engineering_goals import context as project_context
+            g['is_engineering']=bool(project_context(db,g['id']))
             g['target_skill_ids']=json.loads(g.pop('skills'))
             g['paths']=rows(db,'SELECT id,status,content_status,reason,created_at,fingerprint FROM paths WHERE goal_id=:id ORDER BY created_at DESC',id=g['id'])
+            current_fingerprint=fingerprint(db,user['id'],g['id'])
+            for path_item in g['paths']:
+                path_item['requires_refresh']=path_item['status']=='pending_acceptance' and path_item['fingerprint']!=current_fingerprint
             current_budget=one(db,'SELECT version FROM budgets WHERE user_id=:u',u=user['id'])
             g['requires_replan']=any(p['status']=='active' and (json.loads(p['fingerprint'])['goal']!=g['version'] or json.loads(p['fingerprint'])['budget']!=current_budget['version']) for p in g['paths'])
+            # Compare evidence rather than the user watermark: accepting a path
+            # itself advances that watermark and must not request another replan.
+            from app.services.planning_evidence import learner_evidence,evidence_changes
+            from app.services.planning_rules import graph_snapshot
+            g['replan_reasons']=[]
+            diagnostic=one(db,'SELECT * FROM diagnoses WHERE goal_id=:g AND goal_version=:v AND attempt_id IS NOT NULL ORDER BY created_at DESC LIMIT 1',g=g['id'],v=g['version'])
+            if diagnostic:
+                graph,_=graph_snapshot(db,g['id'])
+                evidence=learner_evidence(db,user['id'],{**g,'skills':dump(g['target_skill_ids'])},graph,diagnostic)
+                for active in g['paths']:
+                    if active['status']=='active':
+                        metadata=one(db,'SELECT validation FROM paths WHERE id=:i',i=active['id'])
+                        g['replan_reasons'].extend(evidence_changes(json.loads(metadata['validation']).get('learner_evidence'),evidence))
+            g['requires_replan']=g['requires_replan'] or bool(g['replan_reasons'])
+            g['requires_diagnosis']=not bool(diagnostic)
+            for active in g['paths']:
+                if active['status']!='active':continue
+                before=json.loads(active['fingerprint']);after=json.loads(current_fingerprint)
+                for key,label in [('graph','图谱版本变化'),('resources','来源证据变化'),('course','课程题库或资料关联变化'),('project','工程课程题库或资料关联变化'),('memberships','班级权限变化')]:
+                    if before.get(key)!=after.get(key):g['replan_reasons'].append(label)
+            g['replan_reasons']=list(dict.fromkeys(g['replan_reasons']))
+            g['requires_replan']=g['requires_replan'] or bool(g['replan_reasons'])
             g['diagnoses']=rows(db,'SELECT id,attempt_id FROM diagnoses WHERE goal_id=:id ORDER BY created_at DESC',id=g['id'])
         return goals
 
-def validate_goal(db,user,body):
+def validate_goal(db,user,body,goal_id=None):
     if not body.title.strip(): fail(422,'目标标题不能为空')
     try: due=date.fromisoformat(body.due_date)
     except ValueError: fail(422,'截止日期格式错误')
@@ -117,7 +221,7 @@ def validate_goal(db,user,body):
     if body.class_id:
         c=class_access(db,user,body.class_id)
         if c['status']!='active': fail(409,'不能关联归档班级')
-    graph,_=graph_snapshot(db)
+    graph,_=graph_snapshot(db,goal_id)
     skills=body.target_skill_ids
     if skills and (len(skills)!=len(set(skills)) or not set(skills)<=set(s['id'] for s in graph)): fail(422,'知识点不存在或重复')
     if not skills and {node['id'] for node in graph}=={node['id'] for node in SKILLS} and any(term in body.title.lower() for term in ('python','函数','递归','调用栈')):
@@ -145,19 +249,22 @@ def goal_history(id:str,user=Depends(current_user)):
         return rows(db,'SELECT version,payload,created_at FROM goal_revisions WHERE goal_id=:g ORDER BY version DESC',g=id)
 
 @router.get('/goals/{id}/feasibility')
-def feasibility(id:str,user=Depends(current_user)):
+def feasibility(id:str,user=Depends(current_user),
+                daily_minutes:int|None=Query(None,ge=1,le=1440),
+                weekly_minutes:int|None=Query(None,ge=1,le=10080), due_date:date|None=None):
     with transaction() as db:
         g=goal_access(db,user,id)
         skills=json.loads(g['skills'])
         if not skills:return {'status':'missing_structure','required_minutes':None,'reasons':['请先确认目标知识点映射'],'proven_infeasible':False}
         from app.services.planning_rules import graph_snapshot
-        graph,_=graph_snapshot(db)
+        graph,_=graph_snapshot(db,id)
         required_skills=set(skills)
         for node in reversed(graph):
             if node['id'] in required_skills: required_skills.update(node['prerequisites'])
         required=sum(s['minutes'] for s in graph if s['id'] in required_skills)
         try:
-            schedule=allocate(db,user['id'],required,g['due_date'],id,g['weekly_minutes'])
+            overrides={key:value for key,value in {'daily_minutes':daily_minutes,'weekly_minutes':weekly_minutes}.items() if value is not None}
+            schedule=allocate(db,user['id'],required,due_date.isoformat() if due_date else g['due_date'],id,g['weekly_minutes'],budget_override=overrides)
             from app.api.resources import visible
             text=''
             for resource in visible(db,user):
@@ -170,7 +277,7 @@ def feasibility(id:str,user=Depends(current_user)):
                     'missing_skills':gaps,'reasons':['缺少授权正文，请补充资料：'+','.join(gaps)] if gaps else [],'proven_infeasible':False}
         except HTTPException as exc:
             if exc.status_code!=409:raise
-            return {'status':'budget_conflict','required_minutes':required,'schedule':[],'reasons':[exc.detail['message']],'proven_infeasible':True}
+            return {'status':'budget_conflict','required_minutes':required,'schedule':[],'reasons':[exc.detail['message']],'budget_conflict':exc.detail.get('budget_conflict'),'proven_infeasible':True}
 
 @router.post('/goals',status_code=201)
 def create(body:GoalInput,user=Depends(current_user)):
@@ -186,6 +293,13 @@ def create(body:GoalInput,user=Depends(current_user)):
 def edit(id:str,body:dict,user=Depends(current_user)):
     with transaction() as db:
         g=goal_access(db,user,id)
+        from app.services.course_planning import binding
+        cb=binding(db,id)
+        from app.services.engineering_goals import context as project_context
+        if project_context(db,id) and 'target_skill_ids' in body and set(body['target_skill_ids'])!=set(json.loads(g['skills'])):
+            fail(409,'工程能力范围已冻结，请重新解析并确认新目标；时间预算和截止日期仍可修改')
+        if cb and 'target_skill_ids' in body and set(body['target_skill_ids'])!=set(json.loads(g['skills'])):
+            fail(409,'课程目标的知识点绑定不可直接改写，请完成新的课程初测并创建新目标')
         if body.get('version')!=g['version']: fail(409,'目标版本已变化')
         if g['status']=='archived': fail(409,'归档目标只读')
         if set(body)-{'version','status','title','target_skill_ids','weekly_minutes','due_date','class_id','preference'}: fail(422,'目标包含不支持的字段')
@@ -198,24 +312,40 @@ def edit(id:str,body:dict,user=Depends(current_user)):
             try:
                 merged=GoalInput(title=body.get('title',g['title']),target_skill_ids=body.get('target_skill_ids',json.loads(g['skills'])),weekly_minutes=body.get('weekly_minutes',g['weekly_minutes']),due_date=body.get('due_date',g['due_date']),class_id=body.get('class_id',g['class_id']),preference=body.get('preference',g['preference']))
             except ValidationError: fail(422,'目标字段不合法')
-            skills=validate_goal(db,user,merged)
+            skills=validate_goal(db,user,merged,id)
             run(db,'UPDATE goals SET title=:t,skills=:s,weekly_minutes=:w,due_date=:d,class_id=:c,version=version+1 WHERE id=:id',t=merged.title,s=dump(skills),w=merged.weekly_minutes,d=merged.due_date,c=merged.class_id,id=id)
             run(db,'UPDATE goals SET preference=:p WHERE id=:id',p=merged.preference,id=id)
         touch(db,user['id'])
-        preserve_goal(db,one(db,'SELECT * FROM goals WHERE id=:id',id=id))
+        updated=one(db,'SELECT * FROM goals WHERE id=:id',id=id)
+        preserve_goal(db,updated)
+        if project_context(db,id) and updated['status']!='archived':
+            prior=one(db,'SELECT * FROM diagnoses WHERE goal_id=:g AND attempt_id IS NOT NULL ORDER BY created_at DESC LIMIT 1',g=id)
+            if prior and prior['goal_version']!=updated['version']:
+                insert(db,'diagnoses',id=uid(),goal_id=id,student_id=user['id'],questions=prior['questions'],attempt_id=prior['attempt_id'],
+                    goal_version=updated['version'],bank_version=prior['bank_version'],mastery_snapshot=prior['mastery_snapshot'],created_at=now())
     return {'ok':True,'requires_replan':True,'message':'目标版本已更新，原路径与已完成记录保留，请重新评估路径'}
 
 @router.post('/goals/{id}/diagnoses',status_code=201)
 def diagnose(id:str,user=Depends(current_user)):
     with transaction() as db:
         g=goal_access(db,user,id)
+        from app.services.engineering_goals import validate_scope
+        validate_scope(db,id)
         if g['status']=='archived': fail(409,'目标已归档')
-        graph,_=graph_snapshot(db)
+        graph,graph_version=graph_snapshot(db,id)
         if not json.loads(g['skills']) or not set(json.loads(g['skills']))<=set(s['id'] for s in graph): fail(409,'该主题缺少可用题库')
         # Do not allow infinite replay of identical disclosed questions as new evidence.
         existing=one(db,'SELECT * FROM diagnoses WHERE goal_id=:id AND goal_version=:v ORDER BY created_at DESC',id=id,v=g['version'])
         if existing: return {'id':existing['id'],'questions':public_questions(json.loads(existing['questions'])),'attempt_id':existing['attempt_id']}
-        bank,bank_version=question_bank(db,'diagnostic')
+        from app.services.course_planning import binding,attach_diagnosis,closure
+        cb=binding(db,id)
+        if cb:
+            latest=one(db,"SELECT * FROM learning_assessments WHERE student_id=:u AND course_id=:c AND phase='diagnostic' AND status='submitted' ORDER BY submitted_at DESC,rowid DESC LIMIT 1",u=user['id'],c=cb['course_id'])
+            if not latest:fail(409,'请先在课程知识库完成首次诊断')
+            did=attach_diagnosis(db,g,latest,cb)
+            d=one(db,'SELECT * FROM diagnoses WHERE id=:i',i=did)
+            return {'id':did,'questions':public_questions(json.loads(d['questions'])),'attempt_id':d['attempt_id']}
+        bank,bank_version=question_bank(db,'diagnostic',graph_version)
         questions=question_snapshot(bank,bank_version)
         published = rows(db, "SELECT * FROM bank_versions WHERE status='published' ORDER BY created_at,id")
         managed = []
@@ -227,7 +357,9 @@ def diagnose(id:str,user=Depends(current_user)):
             managed_skills = {question['skill'] for question in managed}
             questions = [question for question in questions if question['skill'] not in managed_skills] + managed
             bank_version = 'managed-diagnostic-v1'
-        missing=set(json.loads(g['skills']))-{q['skill'] for q in questions}
+        required=closure(graph,json.loads(g['skills']))
+        questions=[q for q in questions if q['skill'] in required]
+        missing=required-{q['skill'] for q in questions}
         if not questions or missing:fail(409,'诊断题库覆盖不足，请补充材料或重试','DIAGNOSTIC_COVERAGE_GAP')
         did=uid();insert(db,'diagnoses',id=did,goal_id=id,student_id=user['id'],questions=dump(questions),goal_version=g['version'],bank_version=bank_version,created_at=now())
         return {'id':did,'questions':public_questions(questions),'attempt_id':None}
@@ -253,6 +385,9 @@ def diagnostic_draft(id:str,body:dict,user=Depends(current_user)):
         g=goal_access(db,user,d['goal_id'])
         if g['status']=='archived': fail(409,'归档目标不能修改诊断')
         if g['version']!=d['goal_version']: fail(409,'目标已变化，请领取当前版本诊断')
+        from app.services.course_planning import validate_versions,binding
+        binding(db,g['id'])
+        validate_versions(db,json.loads(d['questions']))
         validate_answers(json.loads(d['questions']),body,partial=True)
         run(db,'UPDATE diagnoses SET draft_answers=:a WHERE id=:id',a=dump(body),id=id)
     return {'ok':True}
@@ -266,6 +401,8 @@ def diagnostic_submit(id:str,body:Submission,user=Depends(current_user)):
         g=goal_access(db,user,d['goal_id']);questions=json.loads(d['questions'])
         if g['status']=='archived': fail(409,'归档目标不能提交新诊断')
         if g['version']!=d['goal_version']: fail(409,'目标已变化，请领取当前版本诊断')
+        from app.services.course_planning import binding,validate_versions
+        binding(db,g['id']);validate_versions(db,questions)
         validate_answers(questions,body.answers)
         aid=uid();insert(db,'attempts',id=aid,student_id=user['id'],goal_id=g['id'],class_id=g['class_id'],answers=dump(body.answers),feedback='[]',status='scored',minutes=body.minutes,created_at=now())
         f,s=observations(db,aid,questions,body.answers,user['id'],g['class_id'])
@@ -308,10 +445,31 @@ def path(id:str,user=Depends(current_user)):
         for k in ('tasks','sources','validation'): p[k]=json.loads(p[k])
         mastered=mastery(db,user['id'])
         p['remediations']=p['validation'].get('remediations',[])
+        results=rows(db,"""SELECT linked.item_id,a.score,a.created_at FROM (
+                SELECT item_id,attempt_id FROM path_assessments WHERE path_id=:p
+                UNION
+                SELECT item_id,attempt_id FROM assessment_sessions WHERE path_id=:p AND status='submitted'
+            ) linked JOIN attempts a ON a.id=linked.attempt_id
+            WHERE a.student_id=:u AND a.status='scored'
+            ORDER BY a.created_at,a.rowid""",p=id,u=user['id'])
+        first_scores={}
+        attempt_counts={}
+        for result in results:
+            key=result['item_id']
+            first_scores.setdefault(key,result['score'])
+            attempt_counts[key]=attempt_counts.get(key,0)+1
+        latest_attempts={r['item_id']:r for r in results}
         for item in p['tasks']+p['remediations']:
+            latest=latest_attempts.get(item['id'],{})
+            item['assessment_count']=attempt_counts.get(item['id'],0)
+            item['first_assessment_score']=first_scores.get(item['id'])
+            item['latest_assessment_score']=latest.get('score')
+            item['latest_assessment_at']=latest.get('created_at')
             item['locked']=any(mastered.get(s,{}).get('probability',.2)<.75 for s in item.get('prerequisites',[]))
             item['checkin']=one(db,'SELECT * FROM checkins WHERE path_id=:p AND item_id=:i',p=id,i=item['id'])
         p['requires_refresh']=p['fingerprint']!=fingerprint(db,user['id'],p['goal_id'])
+        from app.services.planning import source_changed
+        p['source_refresh_required']=any(source_changed(db,user,source) for source in p['sources'])
         warnings=[]
         for rejected in rows(db,"SELECT validation FROM paths WHERE goal_id=:g AND status='rejected' ORDER BY created_at DESC LIMIT 3",g=p['goal_id']):
             warnings.extend(json.loads(rejected['validation']).get('triggers',[]))
@@ -329,12 +487,24 @@ def accept(id:str,user=Depends(current_user)):
         if g['status']=='archived' or fingerprint(db,user['id'],g['id'])!=p['fingerprint']: fail(409,'预览已过期，请重新生成','STALE_PREVIEW')
         if g['class_id'] and class_access(db,user,g['class_id'])['status']!='active':fail(409,'关联班级已归档')
         from app.core.security import resource_access
-        for source in json.loads(p['sources']):
+        saved_sources=json.loads(p['sources'])
+        for source in saved_sources:
             r=resource_access(db,user,source['resource_id'])
             private_owner=r['scope']=='private' and r['owner_id']==user['id']
             if (r['status']!='published' and not private_owner) or r['current_version']!=source['version_id']: fail(409,'来源已变化，请重新生成')
         items=json.loads(p['tasks']);minutes=sum(t['minutes'] for t in items)
         metadata=json.loads(p['validation'])
+        if not metadata.get('execution',items):
+            fail(409,'这份历史预览没有待学任务，请重新评估目标','NO_PENDING_LEARNING_TASKS')
+        if metadata.get('cloud_called'):
+            from app.services.source_activity_review import source_activity_issues
+            reviewed_sources=[]
+            for source in saved_sources:
+                version=one(db,'SELECT body FROM resource_versions WHERE id=:v',v=source['version_id'])
+                if not version:fail(409,'来源正文已失效，请重新生成','EVIDENCE_CHANGED')
+                reviewed_sources.append({**source,'excerpt':version['body']})
+            issues=source_activity_issues(metadata.get('execution',items),reviewed_sources)
+            if issues:fail(409,'预览活动与来源正文冲突，请重新生成并复核：'+issues[0],'SOURCE_ACTIVITY_CONFLICT')
         remediations=metadata.get('remediations',[])
         minutes+=sum(t['minutes'] for t in remediations)
         if metadata.get('rules'):
@@ -386,10 +556,13 @@ def checkin(body:Checkin,user=Depends(current_user)):
             run(db,'UPDATE checkins SET proportion=:p,minutes=:m,difficulty=:d,note=:n WHERE id=:id',p=body.proportion,m=body.minutes,d=body.difficulty,n=body.note,id=id)
         else:
             id=uid();insert(db,'checkins',id=id,student_id=user['id'],**body.model_dump(),created_at=now())
-        run(db,"UPDATE remediation_tasks SET status='studied' WHERE id=:id AND path_id=:p",id=body.item_id,p=p['id'])
+        if body.proportion>=1:
+            run(db,"UPDATE remediation_tasks SET status='studied' WHERE id=:id AND path_id=:p",id=body.item_id,p=p['id'])
         # Release this work's planned minutes; actual minutes are counted independently.
-        before=int(item['minutes']*(old['proportion'] if old else 0))
-        after=int(item['minutes']*body.proportion)
+        import math
+        from app.services.planning import remaining_work
+        before=item['minutes']-math.ceil(remaining_work(item,old['proportion'] if old else 0))
+        after=item['minutes']-math.ceil(remaining_work(item,body.proportion))
         for day in item.get('dates',[]):
             released_before=min(before,day['minutes']);before-=released_before
             released_after=min(after,day['minutes']);after-=released_after

@@ -19,4 +19,3 @@ export function QuestionEditor({questions,onChange}:{questions:Question[];onChan
  <button type="button" onClick={()=>onChange([...questions,{id:'q'+(questions.length+1),skill:'functions',prompt:'',kind:'single',options:['',''],answer:'0',explanation:''}])}>添加题目</button>
  </section>
 }
-

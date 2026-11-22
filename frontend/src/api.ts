@@ -1,15 +1,19 @@
 export class ApiError extends Error {
     constructor(public status: number, message: string) { super(message); }
 }
+let sessionRevision = 0;
+export function invalidateRequests() { sessionRevision++; }
 export async function api<T = any>(path: string, method = 'GET', body?: unknown): Promise<T> {
+    const revision = sessionRevision;
     const form = body instanceof FormData;
     const response = await fetch('/api/v1' + path, { method, credentials: 'same-origin', headers: { ...(!form && body ? { 'Content-Type': 'application/json' } : {}), ...(method === 'POST' ? { 'Idempotency-Key': crypto.randomUUID() } : {}) }, body: body ? (form ? body : JSON.stringify(body)) : undefined });
     const data = await response.json().catch(() => ({ message: '服务响应格式错误' }));
+    if (revision !== sessionRevision) throw new Error('登录会话已切换');
     if (!response.ok) {
-        if (response.status === 401)
+        if (response.status === 401 && path !== '/auth/me' && path !== '/auth/login')
             window.dispatchEvent(new Event('session-expired'));
         const detail = data.message || data.detail;
-        throw new ApiError(response.status, typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((x: any) => x.msg).join('；') : '操作失败');
+        throw new ApiError(response.status, typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((x: any) => x.msg).join('；') : typeof detail?.message === 'string' ? detail.message : '操作失败');
     }
     return data;
 }
@@ -21,4 +25,3 @@ export type User = {
     role: 'admin' | 'teacher' | 'student';
     must_change: number;
 };
-

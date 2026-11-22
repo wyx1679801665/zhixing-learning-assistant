@@ -26,4 +26,3 @@ export function PhoneSecurity({mode,onBack}:{mode:'bind'|'reset',onBack:()=>void
   try{await perform(form,true);}finally{fields.forEach(x=>x.required=true);}
  }
 }
-

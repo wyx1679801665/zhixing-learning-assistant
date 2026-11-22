@@ -15,4 +15,3 @@ def validate_answers(questions,answers,partial=False):
     for id,value in answers.items():
         q=by_id[id]
         if not isinstance(value,str) or value not in {str(i) for i in range(len(q.get('options',[])))}: fail(422,'请选择有效选项')
-

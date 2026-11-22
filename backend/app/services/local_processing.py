@@ -40,4 +40,3 @@ def process(version, job, token):
             child.kill()
         child.wait()
         output.unlink(missing_ok=True)
-

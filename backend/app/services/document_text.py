@@ -114,4 +114,3 @@ def excerpt_at(body, query):
     markers = list(re.finditer(r'【(段落 \d+|幻灯片 \d+(?: 备注)?|页码 \d+|时间 [^】]+)】', body[:position + 1]))
     location = markers[-1].group(1) if markers else '正文/关联字幕'
     return body[max(0, position - 80):position + 720], location
-

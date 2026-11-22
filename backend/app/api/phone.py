@@ -90,4 +90,3 @@ def reset(body:Reset,response:Response):
     if not ok:fail(422,'账号、手机号或验证码无效')
     response.delete_cookie('zhixing_session')
     return {'ok':True}
-

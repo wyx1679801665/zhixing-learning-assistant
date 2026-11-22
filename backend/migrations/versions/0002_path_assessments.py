@@ -12,4 +12,3 @@ def upgrade():
 
 def downgrade():
     raise RuntimeError('Restore a verified backup instead of deleting history.')
-

@@ -57,4 +57,3 @@ def touch(db, student):
     source=one(db,'SELECT watermark FROM users WHERE id=:id',id=student)
     if source:
         insert(db,'profile_refresh_events',id=uid(),student_id=student,source_watermark=source['watermark'],created_at=now())
-

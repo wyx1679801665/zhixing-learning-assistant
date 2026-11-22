@@ -1,6 +1,7 @@
 {
-  "version": "stage4-code-ready-2026.11.10",
-  "github_commit": "0d541a2bbb681bdbd1acbdc91526c484e39dbe2b",
-  "source_manifest": "版本选择清单.json",
-  "schema_revision": "0020"
+  "version": "path-planning-2026.11.19",
+  "source_manifest": "docs/evidence/implementation/release-summary.json",
+  "schema_revision": "0031",
+  "base_github_commit": "33184854df3bb23b2805e5fa7788352e0e980a1e",
+  "acceptance_status": "p0-p4-project-owner-confirmed"
 }

@@ -31,6 +31,10 @@ class PageText(HTMLParser):
 
     def handle_starttag(self,tag,attrs):
         attributes=dict(attrs)
+        if tag=='img' and not self.hidden:
+            alt=(attributes.get('alt') or '').strip()
+            if alt:
+                self.parts.append(alt)
         if tag=='meta' and (attributes.get('property') or attributes.get('name') or attributes.get('itemprop') or '').lower() in ('article:published_time','datepublished','date'):
             try:self.published_at=datetime.fromisoformat((attributes.get('content') or '').replace('Z','+00:00')).isoformat()
             except ValueError:pass
@@ -99,12 +103,12 @@ def search_status():
 def search_web(query):
     status=search_status()
     if not status['configured']:raise ValueError('实时搜索尚未配置，请联系管理员配置搜索服务')
-    with httpx.Client(timeout=httpx.Timeout(60.0,connect=10.0),follow_redirects=False) as client:
+    with httpx.Client(timeout=httpx.Timeout(60.0,connect=10.0,read=100.0 if status['provider']=='dashscope' else 60.0),follow_redirects=False) as client:
         if status['provider']=='dashscope':
             response=client.post('https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation',
                 headers={'Authorization':'Bearer '+os.environ['DASHSCOPE_API_KEY']},
                 json={'model':os.getenv('ZHIXING_SEARCH_MODEL','qwen-plus'),'input':{'messages':[{'role':'user','content':query}]},
-                      'parameters':{'enable_search':True,'result_format':'message','search_options':{'forced_search':True,'enable_source':True}}})
+                      'parameters':{'max_tokens':256,'enable_search':True,'result_format':'message','search_options':{'forced_search':True,'enable_source':True}}})
             if response.status_code!=200:raise ValueError('搜索服务响应异常，HTTP '+str(response.status_code))
             info=response.json().get('output',{}).get('search_info')
             if not isinstance(info,dict) or not isinstance(info.get('search_results'),list):raise ValueError('供应商未返回真实搜索来源，不能将模型回答当作联网结果')

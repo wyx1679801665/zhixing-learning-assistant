@@ -65,4 +65,3 @@ export function ResourceVersions({resource:r,onChanged}:{resource:any;onChanged:
     {items.map(version=><div className="listrow" key={version.id}>{version.filename} · {version.parse_status} · {new Date(version.created_at).toLocaleString()}</div>)}
   </section>;
 }
-

@@ -44,4 +44,3 @@ export function ProfileExplorer({classId}:{classId?:string}){
   {events.map(e=><p key={e.id}>刷新水位{e.source_watermark} · {e.status} · {e.error||'无错误'}</p>)}
  </section>
 }
-

@@ -13,4 +13,3 @@ def upgrade():
 
 def downgrade():
     raise RuntimeError('Use a verified backup to restore data; destructive downgrade disabled.')
-

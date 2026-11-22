@@ -2,6 +2,7 @@
 import json
 from datetime import datetime,timedelta,timezone,date
 from zoneinfo import ZoneInfo
+from fastapi import HTTPException
 from app.core.db import *
 from app.core.security import fail
 
@@ -37,7 +38,9 @@ def observations(db,attempt,questions,answers,student,class_id=None):
             correct=set(value.split(','))==set(expected.split(','))
         else: correct=value==expected
         scores.append(int(correct))
-        insert(db,'observations',id=uid(),attempt_id=attempt,student_id=student,class_id=class_id,skill=q['skill'],correct=int(correct),sequence=index)
+        from app.services.engineering_goals import add_evidence
+        if not add_evidence(db,student,q,attempt,correct,index):
+            insert(db,'observations',id=uid(),attempt_id=attempt,student_id=student,class_id=class_id,skill=q['skill'],correct=int(correct),sequence=index)
         feedback.append({'id':q['id'],'prompt':q['prompt'],'answer':expected,'explanation':q.get('explanation',''),'correct':correct,'skill':q['skill'],'rule_version':'assessment-v1','recommendation':'进入后续学习并按计划复习' if correct else '复习本知识点资料并完成补强测验'})
     return feedback,(sum(scores)/len(scores) if scores else None)
 
@@ -57,12 +60,18 @@ def fingerprint(db,student,goal_id):
         ORDER BY r.id""",u=student)
     graph=one(db,'SELECT id FROM graph_versions WHERE active=1')
     memberships=rows(db,'SELECT class_id,status FROM memberships WHERE user_id=:u ORDER BY class_id',u=student)
+    from app.services.course_planning import fingerprint_data
+    course_data=fingerprint_data(db,goal_id)
+    from app.services.engineering_goals import fingerprint_data as project_data
+    project=project_data(db,goal_id)
     return dump({'goal':goal['version'],'watermark':user['watermark'],'budget':budget['version'],
-                 'graph':graph['id'] if graph else 'curated-v1','resources':resources,'memberships':memberships,
+                 'graph':project['graph'] if project else graph['id'] if graph else 'curated-v1','resources':resources,'memberships':memberships,'course':course_data,'project':project,
                  'identity':{'status':user['status'],'auth_version':user['auth_version'],'role':user['role']}})
 
-def allocate(db,student,minutes,due_date,exclude_goal=None,goal_limit=None):
+def allocate(db,student,minutes,due_date,exclude_goal=None,goal_limit=None,*,budget_override=None):
     budget=one(db,'SELECT * FROM budgets WHERE user_id=:u',u=student)
+    if budget_override:
+        budget={**budget,**budget_override}
     tz=ZoneInfo(budget['timezone']); today=datetime.now(tz).date()
     due=datetime.fromisoformat(due_date).astimezone(tz).date() if 'T' in due_date else date.fromisoformat(due_date)
     if due<today or due>today+timedelta(days=730): fail(422,'截止日期须在未来两年内')
@@ -78,18 +87,44 @@ def allocate(db,student,minutes,due_date,exclude_goal=None,goal_limit=None):
     for event in actual_events(db,student):
         day=datetime.fromisoformat(event['created_at']).astimezone(tz).date().isoformat()
         add(day,event['minutes'])
-    remaining=minutes; output=[]; days=json.loads(budget['days'])
-    for offset in range((due-today).days+1):
+        if exclude_goal and event.get('goal_id')==exclude_goal:
+            week=date.fromisoformat(day).strftime('%G-%V')
+            goal_week[week]=goal_week.get(week,0)+event['minutes']
+    remaining=shortfall=minutes
+    output=[]
+    earliest=None
+    days=json.loads(budget['days'])
+    for offset in range(731):
         day=today+timedelta(days=offset)
-        if day.weekday() not in days: continue
-        ds=day.isoformat(); wk=day.strftime('%G-%V')
+        if day.weekday() not in days:
+            continue
+        ds=day.isoformat()
+        wk=day.strftime('%G-%V')
         available=min(budget['daily_minutes']-daily.get(ds,0),budget['weekly_minutes']-weekly.get(wk,0))
-        if goal_limit: available=min(available,goal_limit-goal_week.get(wk,0))
-        if available<=0: continue
-        m=min(remaining,available); output.append({'date':ds,'minutes':m}); remaining-=m
-        add(ds,m); goal_week[wk]=goal_week.get(wk,0)+m
-        if remaining==0: break
-    if remaining: fail(409,f'全局预算不足，仍缺{remaining}分钟；请延长截止或调整预算','BUDGET_CONFLICT')
+        if goal_limit:
+            available=min(available,goal_limit-goal_week.get(wk,0))
+        if available<=0:
+            continue
+        amount=min(remaining,available)
+        remaining-=amount
+        add(ds,amount)
+        goal_week[wk]=goal_week.get(wk,0)+amount
+        if day<=due:
+            output.append({'date':ds,'minutes':amount})
+            shortfall=remaining
+            if not remaining:
+                return output
+        elif not remaining:
+            earliest=ds
+            break
+    if shortfall:
+        raise HTTPException(409,detail={
+            'code':'BUDGET_CONFLICT',
+            'message':f'需要安排 {minutes} 分钟，截止日前可安排 {minutes-shortfall} 分钟，仍缺{shortfall}分钟。'
+                      +(f'按当前预算最早可排完的日期是 {earliest}。' if earliest else '按当前预算在可规划的两年内无法排完。'),
+            'budget_conflict':{'required_minutes':minutes,'available_minutes':minutes-shortfall,
+                               'shortfall_minutes':shortfall,'due_date':due.isoformat(),'earliest_finish_date':earliest},
+        })
     return output
 
 def actual_events(db,student,class_id=None):
@@ -98,7 +133,8 @@ def actual_events(db,student,class_id=None):
     events=rows(db,'SELECT id,minutes,created_at,resource_id AS source_id FROM study_sessions WHERE student_id=:u'+suffix,**args)
     events+=rows(db,'SELECT id,minutes,created_at,assignment_id AS source_id FROM attempts WHERE student_id=:u'+suffix,**args)
     if not class_id:
-        events+=rows(db,'SELECT id,minutes,created_at,item_id AS source_id FROM checkins WHERE student_id=:u',u=student)
+        events+=rows(db,'SELECT c.id,c.minutes,c.created_at,c.item_id AS source_id,p.goal_id FROM checkins c JOIN paths p ON p.id=c.path_id WHERE c.student_id=:u',u=student)
+        events+=rows(db,'SELECT id,minutes,created_at,material_link_id AS source_id FROM learning_sessions WHERE student_id=:u',u=student)
     return events
 
 SKILLS=[{'id':'functions','name':'函数基础','minutes':30,'prerequisites':[]},
@@ -115,4 +151,3 @@ QUESTIONS=[
 
 def public_questions(questions):
     return [{k:v for k,v in q.items() if k not in ('answer','explanation')} for q in questions]
-

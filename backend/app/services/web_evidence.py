@@ -28,9 +28,13 @@ def public_target(url):
 class PageText(HTMLParser):
     def __init__(self):
         super().__init__();self.hidden=0;self.title=False;self.titles=[];self.parts=[];self.published_at=None
+        self.math=[]
 
     def handle_starttag(self,tag,attrs):
         attributes=dict(attrs)
+        if not self.hidden and (tag=='math' or self.math):
+            self.math.append((tag,[]))
+            return
         if tag=='img' and not self.hidden:
             alt=(attributes.get('alt') or '').strip()
             if alt:
@@ -42,10 +46,31 @@ class PageText(HTMLParser):
         if tag=='title':self.title=True
 
     def handle_endtag(self,tag):
+        if self.math:
+            if self.math[-1][0]!=tag:
+                return
+            _,parts=self.math.pop()
+            formula=''.join(parts)
+            if tag=='msqrt':
+                formula='√('+formula+')'
+            elif tag in ('msup','msub') and len(parts)==2:
+                operator='^' if tag=='msup' else '_'
+                formula=parts[0]+operator+parts[1]
+            elif tag in ('annotation','annotation-xml'):
+                return
+            if self.math:
+                self.math[-1][1].append(formula)
+            elif formula:
+                self.parts.append(formula)
+            return
         if tag in ('script','style','noscript','template'):self.hidden=max(0,self.hidden-1)
         if tag=='title':self.title=False
 
     def handle_data(self,data):
+        if self.math:
+            if data.strip():
+                self.math[-1][1].append(data.strip())
+            return
         if not self.hidden and data.strip():
             self.parts.append(data.strip())
             if self.title:self.titles.append(data.strip())

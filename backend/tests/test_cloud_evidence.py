@@ -173,3 +173,11 @@ def test_web_text_keeps_inline_formula_alt_in_reading_order():
     page.feed('<p>旋转公式<img alt="q p q*">再提取虚部</p>'
               '<template><img alt="隐藏公式"></template><img src="missing.png">')
     assert page.parts==['旋转公式','q p q*','再提取虚部']
+
+def test_web_text_keeps_mathml_radical_and_exponents():
+    from app.services.web_evidence import PageText
+    page=PageText()
+    page.feed('<p>Vector magnitude: <math><msqrt><msup><mi>x</mi><mn>2</mn></msup>'
+              '<mo>+</mo><msup><mi>y</mi><mn>2</mn></msup><mo>+</mo>'
+              '<msup><mi>z</mi><mn>2</mn></msup></msqrt></math></p>')
+    assert page.parts==['Vector magnitude:', '√(x^2+y^2+z^2)']

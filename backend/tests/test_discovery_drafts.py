@@ -7,6 +7,22 @@ from test_route_contrasts import seed_route_fixture, CPP
 QUOTE='四元数旋转使用单位四元数，练习中首先验证归一化条件，再比较旋转前后向量长度。'
 
 
+def test_norm_formula_requires_more_than_rotation_formula():
+    assert not discovery.has_norm_formula("旋转后的点为 p′ = q p q^{-1}。")
+    assert discovery.has_norm_formula("三维向量的长度为 √(x² + y² + z²)。")
+    assert discovery.has_norm_formula(r"\sqrt{x^{2}+y^{2}+z^{2}}")
+    assert not discovery.has_norm_formula(r"|q|=\sqrt{w^2+x^2+y^2+z^2}=1")
+    assert discovery.has_norm_formula(r"|q|=\sqrt{w^2+x^2+y^2+z^2}；|v|=\sqrt{x^2+y^2+z^2}")
+    assert not discovery.has_norm_formula("四元数的范数由四个分量平方和定义。")
+    assert discovery.has_quaternion_rotation_formula(r"p'=q\,p\,q^{-1}")
+    assert discovery.has_quaternion_rotation_formula("p′ = q · (0,v) · q*")
+    assert not discovery.has_quaternion_rotation_formula("q = [cos(θ/2), sin(θ/2)·u]")
+    assert discovery.quaternion_norm_gap("验证 ||v|| = ||v′||",["进行旋转。"])
+    assert discovery.quaternion_norm_gap("分别计算 ‖v‖ 与 ‖v′‖",["√(x²+y²+z²)"]) is None
+    assert discovery.quaternion_norm_gap("证明四元数旋转保长",["√(x²+y²+z²)"])
+    assert discovery.quaternion_norm_gap("证明四元数旋转保长",["利用四元数范数的乘法性"]) is None
+
+
 def test_miss_trace_starts_at_initial_interval():
     case=dict(values=[1,3,5,7,9],target=4,trace=[[0,1,0],[1,1,1]])
     assert not discovery.complete_miss_trace(case)
